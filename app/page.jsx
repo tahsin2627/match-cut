@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useState } from "react";
 
 const CLOUD_NAME = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
 const UPLOAD_PRESET = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET || "unsigned_video";
@@ -52,7 +52,7 @@ export default function Home() {
     <main className="space-y-6">
       <header className="flex items-center justify-between">
         <div className="text-2xl font-semibold">
-          <span className="bg-clip-text text-transparent bg-gradient-to-r from-brand.purple to-brand.pink">
+          <span className="bg-clip-text text-transparent bg-gradient-to-r from-brand-purple to-brand-pink">
             MatchCut
           </span>{" "}
           <span className="text-white/50 text-sm align-super">beta</span>
@@ -91,7 +91,7 @@ export default function Home() {
                 {name} — {pct}%
                 <div className="w-full h-1 bg-white/10 rounded">
                   <div
-                    className="h-1 bg-gradient-to-r from-brand.purple to-brand.pink rounded"
+                    className="h-1 bg-gradient-to-r from-brand-purple to-brand-pink rounded"
                     style={{ width: `${pct}%` }}
                   />
                 </div>
