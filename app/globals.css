@@ -25,8 +25,14 @@ body {
   .btn { @apply rounded-lg px-4 py-2 font-medium transition; }
   .btn-primary { @apply bg-white/10 hover:bg-white/20 border border-white/20; }
 
-  /* FIXED: hyphen names for custom colors */
-  .btn-accent { @apply bg-gradient-to-r from-brand-purple to-brand-pink hover:opacity-90 text-white; }
+  /* Use plain CSS for the gradient so Tailwind doesn’t parse from-* in @apply */
+  .btn-accent {
+    color: #fff;
+    background-image: linear-gradient(to right, #7C3AED, #FF5CAA);
+    border: 1px solid rgba(255,255,255,0.15);
+    transition: opacity .2s ease;
+  }
+  .btn-accent:hover { opacity: 0.9; }
 
   .btn-muted { @apply bg-white/5 hover:bg-white/10 border border-white/10; }
 
