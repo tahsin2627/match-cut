@@ -9,7 +9,7 @@ function escapeHtml(s=""){return String(s).replaceAll("&","&amp;").replaceAll("<
 function dimsFor(aspect, quality){if(aspect==="9:16")return quality==="1080p"?{w:1080,h:1920}:{w:720,h:1280};return quality==="1080p"?{w:1920,h:1080}:{w:1280,h:720};}
 function mapResolution(q){return q==="1080p"?"1080":"hd";}
 
-/* Cloudflare Images uploader */
+// CF Images uploader
 async function uploadDataUrlToCFImages(dataUrl) {
   const accountId = process.env.CF_IMAGES_ACCOUNT_ID;
   const token = process.env.CF_IMAGES_API_TOKEN;
@@ -46,7 +46,7 @@ async function ensureHosted(url, aspect, phrase){
   return url;
 }
 
-/* Images provider */
+// Sources
 async function getImages({ phrase, aspect, count = 4, source = "pexels" }) {
   const urls = [];
   const orientation = aspect === "9:16" ? "portrait" : "landscape";
@@ -80,6 +80,7 @@ async function getImages({ phrase, aspect, count = 4, source = "pexels" }) {
     const dims = dimsFor(aspect,"1080p");
     urls.push(`https://picsum.photos/seed/${encodeURIComponent((phrase||"matchcut")+"-"+Math.random().toString(36).slice(2))}/${dims.w}/${dims.h}`);
   }
+
   const hosted = [];
   for (const u of urls.slice(0, count)) {
     hosted.push(await ensureHosted(u, aspect, phrase));
@@ -87,7 +88,6 @@ async function getImages({ phrase, aspect, count = 4, source = "pexels" }) {
   return hosted;
 }
 
-// Cloudflare Workers AI
 async function generateAIImagesCF({ prompt, n = 1 }) {
   const account = process.env.CF_ACCOUNT_ID;
   const token = process.env.CF_API_TOKEN;
@@ -104,8 +104,6 @@ async function generateAIImagesCF({ prompt, n = 1 }) {
   }
   return out;
 }
-
-// Hugging Face
 async function generateAIImagesHF({ prompt, n = 1 }) {
   const token = process.env.HF_TOKEN;
   const model = "black-forest-labs/FLUX.1-schnell";
@@ -126,36 +124,56 @@ async function generateAIImagesHF({ prompt, n = 1 }) {
 
 export async function POST(req) {
   try {
-    const { phrase="you", aspect="9:16", quality="1080p", source="pexels", overlay=true, zoom=true, karaoke=true, count=4 } = await req.json();
+    const { phrase="you", aspect="9:16", quality="1080p", source="pexels", overlay=true, karaoke=true, count=4 } = await req.json();
     const key = process.env.SHOTSTACK_API_KEY;
     if (!key) return NextResponse.json({ error: "SHOTSTACK_API_KEY missing" }, { status: 500 });
 
+    // 1) Host images
     const images = await getImages({ phrase, aspect, count, source });
+
+    // 2) Build timeline: image clips + overlay clips
     const safeWord = escapeHtml(phrase);
     const dims = dimsFor(aspect, "1080p");
     const resolution = mapResolution(quality);
 
-    const clips = images.map((img, i) => {
-      const html = `
-        <div class="wrap">
-          <div class="bg"></div>
-          ${overlay ? `<div class="chip"><span class="label">${safeWord}</span>${karaoke ? `<span class="fill"></span>` : ``}</div>` : ``}
-        </div>`;
-      const css = `
-        .wrap{width:100%;height:100%;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;}
-        .bg{position:absolute;inset:0;background-image:url("${img}");background-size:cover;background-position:center;transform:scale(1.05);${zoom?`animation:zoom 1s ease-out forwards;`:``}}
-        @keyframes zoom{from{transform:scale(1.05);}to{transform:scale(1.10);}}
-        .chip{position:absolute;bottom:8%;padding:12px 22px;border-radius:14px;font:800 64px Montserrat,Arial,sans-serif;color:#fff;background:linear-gradient(135deg,#7C3AED,#FF5CAA);box-shadow:0 12px 34px rgba(0,0,0,.4);overflow:hidden;}
-        .chip .label{position:relative;z-index:2;}
-        .chip .fill{position:absolute;left:0;top:0;bottom:0;width:0%;background:rgba(255,255,255,.22);animation:fill .8s linear forwards .15s;z-index:1;}
-        @keyframes fill{from{width:0%;}to{width:100%;}}
-        @media (max-aspect-ratio:10/16){.chip{font-size:52px;}}
-      `;
-      return { asset: { type: "html", html, css, width: dims.w, height: dims.h }, start: i * 1.0, length: 1.0, position: "center", transition: { in: "fade", out: "fade" } };
-    });
+    const imageTrack = {
+      clips: images.map((src, i) => ({
+        asset: { type: "image", src },
+        start: i * 1.0,
+        length: 1.0,
+        fit: "cover",
+        position: "center",
+        transition: { in: "fade", out: "fade" }
+      }))
+    };
 
-    const payload = { timeline: { background: "#000000", tracks: [{ clips }] }, output: { format: "mp4", resolution, aspectRatio: aspect, fps: 30 } };
+    const overlayTrack = {
+      clips: overlay
+        ? images.map((_, i) => {
+            const html = `<div class="wrap"><div class="chip"><span class="label">${safeWord}</span><span class="fill"></span></div></div>`;
+            const css = `
+              .wrap{width:100%;height:100%;position:relative;overflow:hidden;display:flex;align-items:flex-end;justify-content:center;}
+              .chip{margin-bottom:8%;padding:12px 22px;border-radius:14px;font:800 64px Montserrat,Arial,sans-serif;color:#fff;background:linear-gradient(135deg,#7C3AED,#FF5CAA);box-shadow:0 12px 34px rgba(0,0,0,.4);position:relative;overflow:hidden;}
+              .chip .label{position:relative;z-index:2;}
+              .chip .fill{position:absolute;left:0;top:0;bottom:0;width:0%;background:rgba(255,255,255,.22);animation:fill .8s linear forwards .15s;z-index:1;}
+              @keyframes fill{from{width:0%;}to{width:100%;}}
+              @media (max-aspect-ratio:10/16){.chip{font-size:52px;}}
+            `;
+            return {
+              asset: { type: "html", html, css, width: dims.w, height: dims.h },
+              start: i * 1.0,
+              length: 1.0,
+              position: "center",
+              transition: { in: "fade", out: "fade" }
+            };
+          })
+        : []
+    };
 
+    const timeline = { background: "#000000", tracks: [imageTrack, overlayTrack] };
+    const payload = { timeline, output: { format: "mp4", resolution, aspectRatio: aspect, fps: 30 } };
+
+    // 3) Render
     const res = await fetch(`${SHOTSTACK}/render`, { method: "POST", headers: { "x-api-key": key, "content-type": "application/json" }, body: JSON.stringify(payload) });
     const txt = await res.text();
     let json; try { json = JSON.parse(txt); } catch { json = { raw: txt }; }
