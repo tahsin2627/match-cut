@@ -7,9 +7,9 @@ const SHOTSTACK = "https://api.shotstack.io/stage";
 
 function escapeHtml(s=""){return String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");}
 function dimsFor(aspect, quality){if(aspect==="9:16")return quality==="1080p"?{w:1080,h:1920}:{w:720,h:1280};return quality==="1080p"?{w:1920,h:1080}:{w:1280,h:720};}
-function mapResolution(q){return q==="1080p"?"1080":"hd";} // Shotstack expects "1080" or "hd" (720p)
+function mapResolution(q){return q==="1080p"?"1080":"hd";} // 720p -> "hd"
 
-/* --- Cloudflare Images uploader (replaces Cloudinary) --- */
+// Cloudflare Images uploader (hosts AI data URLs so Shotstack payload stays small)
 async function uploadDataUrlToCFImages(dataUrl) {
   const accountId = process.env.CF_IMAGES_ACCOUNT_ID;
   const token = process.env.CF_IMAGES_API_TOKEN;
@@ -33,9 +33,8 @@ async function uploadDataUrlToCFImages(dataUrl) {
   if (!r.ok || !j.success) throw new Error(j?.errors?.[0]?.message || "CF Images upload failed");
   const url = j.result?.variants?.[0];
   if (!url) throw new Error("CF Images variant URL missing");
-  return url; // CDN URL
+  return url;
 }
-
 async function ensureHosted(url, aspect, phrase){
   if (url.startsWith("data:image")) {
     try { return await uploadDataUrlToCFImages(url); }
@@ -47,7 +46,7 @@ async function ensureHosted(url, aspect, phrase){
   return url;
 }
 
-/* --- Image sources (Pexels / AI via CF or HF / Placeholder) --- */
+// Sources (Pexels / AI via Cloudflare or Hugging Face / Placeholder)
 async function getImages({ phrase, aspect, count = 1, source = "pexels" }) {
   const urls = [];
   const orientation = aspect === "9:16" ? "portrait" : "landscape";
@@ -81,6 +80,7 @@ async function getImages({ phrase, aspect, count = 1, source = "pexels" }) {
     const dims = dimsFor(aspect,"1080p");
     urls.push(`https://picsum.photos/seed/${encodeURIComponent((phrase||"matchcut")+"-"+Math.random().toString(36).slice(2))}/${dims.w}/${dims.h}`);
   }
+
   const hosted = [];
   for (const u of urls.slice(0, count)) {
     hosted.push(await ensureHosted(u, aspect, phrase));
@@ -88,7 +88,6 @@ async function getImages({ phrase, aspect, count = 1, source = "pexels" }) {
   return hosted;
 }
 
-// Cloudflare Workers AI (Flux Schnell)
 async function generateAIImagesCF({ prompt, n = 1 }) {
   const account = process.env.CF_ACCOUNT_ID;
   const token = process.env.CF_API_TOKEN;
@@ -101,12 +100,10 @@ async function generateAIImagesCF({ prompt, n = 1 }) {
     if (!res.ok) throw new Error(`CF AI error ${res.status}`);
     const buf = await res.arrayBuffer();
     const b64 = Buffer.from(buf).toString("base64");
-    out.push(`data:image/png;base64,${b64}`); // will be hosted by ensureHosted
+    out.push(`data:image/png;base64,${b64}`);
   }
   return out;
 }
-
-// Hugging Face Inference API
 async function generateAIImagesHF({ prompt, n = 1 }) {
   const token = process.env.HF_TOKEN;
   const model = "black-forest-labs/FLUX.1-schnell";
@@ -120,44 +117,61 @@ async function generateAIImagesHF({ prompt, n = 1 }) {
     if (!res.ok) throw new Error(`HF error ${res.status}`);
     const buf = await res.arrayBuffer();
     const b64 = Buffer.from(buf).toString("base64");
-    out.push(`data:image/png;base64,${b64}`); // will be hosted by ensureHosted
+    out.push(`data:image/png;base64,${b64}`);
   }
   return out;
 }
 
 export async function POST(req) {
   try {
-    const { phrase="you", aspect="9:16", quality="1080p", source="pexels", overlay=true, zoom=true, karaoke=true } = await req.json();
+    const { phrase="you", aspect="9:16", quality="1080p", source="pexels", overlay=true, karaoke=true } = await req.json();
     const key = process.env.SHOTSTACK_API_KEY;
     if (!key) return NextResponse.json({ error: "SHOTSTACK_API_KEY missing" }, { status: 500 });
 
+    // 1) Get and host image
     const [imageUrl] = await getImages({ phrase, aspect, count: 1, source });
+
+    // 2) Build timeline: background as IMAGE clip + overlay as HTML clip
     const safeWord = escapeHtml(phrase);
     const length = 4.0;
     const dims = dimsFor(aspect, "1080p");
     const resolution = mapResolution(quality);
 
-    const html = `
+    const imageClip = {
+      asset: { type: "image", src: imageUrl },
+      start: 0,
+      length,
+      fit: "cover",
+      position: "center",
+      transition: { in: "fade", out: "fade" }
+    };
+
+    const html = overlay ? `
       <div class="wrap">
-        <div class="bg"></div>
-        ${overlay ? `<div class="chip"><span class="label">${safeWord}</span>${karaoke ? `<span class="fill"></span>` : ``}</div>` : ``}
-      </div>`;
+        <div class="chip"><span class="label">${safeWord}</span>${karaoke ? `<span class="fill"></span>` : ``}</div>
+      </div>` : `<div class="wrap"></div>`;
     const css = `
-      .wrap{width:100%;height:100%;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;}
-      .bg{position:absolute;inset:0;background-image:url("${imageUrl}");background-size:cover;background-position:center;transform:scale(1.06);${zoom?`animation:zoom 4s ease-out forwards;`:``}}
-      @keyframes zoom{from{transform:scale(1.06);}to{transform:scale(1.12);}}
-      .chip{position:absolute;bottom:8%;padding:14px 26px;border-radius:14px;font:800 72px Montserrat,Arial,sans-serif;color:#fff;background:linear-gradient(135deg,#7C3AED,#FF5CAA);box-shadow:0 12px 34px rgba(0,0,0,.4);overflow:hidden;}
+      .wrap{width:100%;height:100%;position:relative;overflow:hidden;display:flex;align-items:flex-end;justify-content:center;}
+      .chip{margin-bottom:8%;padding:14px 26px;border-radius:14px;font:800 72px Montserrat,Arial,sans-serif;color:#fff;background:linear-gradient(135deg,#7C3AED,#FF5CAA);box-shadow:0 12px 34px rgba(0,0,0,.4);position:relative;overflow:hidden;}
       .chip .label{position:relative;z-index:2;}
       .chip .fill{position:absolute;left:0;top:0;bottom:0;width:0%;background:rgba(255,255,255,.22);animation:fill 3.2s linear forwards .4s;z-index:1;}
       @keyframes fill{from{width:0%;}to{width:100%;}}
       @media (max-aspect-ratio:10/16){.chip{font-size:60px;}}
     `;
+    const overlayClip = {
+      asset: { type: "html", html, css, width: dims.w, height: dims.h },
+      start: 0,
+      length,
+      position: "center",
+      transition: { in: "fade", out: "fade" }
+    };
 
     const payload = {
-      timeline: { background: "#000000", tracks: [{ clips: [{ asset: { type: "html", html, css, width: dims.w, height: dims.h }, start: 0, length, position: "center", transition: { in: "fade", out: "fade" } }] }] },
+      timeline: { background: "#000000", tracks: [{ clips: [imageClip] }, { clips: [overlayClip] }] },
       output: { format: "mp4", resolution, aspectRatio: aspect, fps: 30 }
     };
 
+    // 3) Render
     const res = await fetch(`${SHOTSTACK}/render`, { method: "POST", headers: { "x-api-key": key, "content-type": "application/json" }, body: JSON.stringify(payload) });
     const txt = await res.text();
     let json; try { json = JSON.parse(txt); } catch { json = { raw: txt }; }
