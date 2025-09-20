@@ -12,10 +12,20 @@ body {
 }
 
 @layer components {
-  .glass { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); backdrop-filter: blur(14px); border-radius: 16px; }
+  .glass {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    backdrop-filter: blur(14px);
+    border-radius: 16px;
+  }
   .btn { @apply rounded-lg px-4 py-2 font-medium transition; }
   .btn-primary { @apply bg-white/10 hover:bg-white/20 border border-white/20; }
-  .btn-accent { color: #fff; background-image: linear-gradient(to right, #7C3AED, #FF5CAA); border: 1px solid rgba(255,255,255,0.15); transition: opacity .2s ease; }
+  .btn-accent {
+    color: #fff;
+    background-image: linear-gradient(to right, #7C3AED, #FF5CAA);
+    border: 1px solid rgba(255,255,255,0.15);
+    transition: opacity .2s ease;
+  }
   .btn-accent:hover { opacity: 0.9; }
   .btn-muted { @apply bg-white/5 hover:bg-white/10 border border-white/10; }
   .input { @apply w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-white/30; }
