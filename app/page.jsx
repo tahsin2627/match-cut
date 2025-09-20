@@ -10,7 +10,7 @@ export default function Home() {
   const [quality, setQuality] = useState(DEFAULT_QUALITY);
 
   const [caps, setCaps] = useState({ pexels: false, ai_cf: false, ai_hf: false });
-  const [source, setSource] = useState("placeholder"); // auto-picked after caps load
+  const [source, setSource] = useState("placeholder"); // auto-set after caps load
 
   const [overlay, setOverlay] = useState(true);
   const [zoom, setZoom] = useState(true);
@@ -18,6 +18,7 @@ export default function Home() {
 
   const [busy, setBusy] = useState("");
   const [job, setJob] = useState({ id: "", status: "", url: "" });
+  const [errMsg, setErrMsg] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -38,47 +39,48 @@ export default function Home() {
   async function poll(id) {
     const sr = await fetch(`/api/render/status?id=${id}`);
     const sj = await sr.json();
-    if (sj.error) throw new Error(sj.error);
+    if (sj.error) {
+      setErrMsg(sj.error);
+      setBusy("");
+      return;
+    }
     setJob((prev) => ({ ...prev, status: sj.status, url: sj.url || "" }));
     if (sj.status === "done" || sj.status === "failed" || sj.status === "cancelled") {
       setBusy("");
+      if (sj.status !== "done") setErrMsg(`Render ${sj.status}`);
       return;
     }
     setTimeout(() => poll(id), 2500);
   }
 
   async function run(path, body) {
-    setBusy("Rendering…");
+    setErrMsg("");
+    setBusy("Creating render…");
     setJob({ id: "", status: "queued", url: "" });
     const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const j = await r.json();
-    if (!r.ok) throw new Error(j.error || "Render create failed");
+    if (!r.ok) {
+      setBusy("");
+      setErrMsg(j?.detail ? JSON.stringify(j.detail) : (j?.error || "Render create failed"));
+      return;
+    }
     setJob({ id: j.id, status: "queued", url: "" });
+    setBusy("Rendering…");
     poll(j.id);
   }
 
   const quick4s = async () => {
-    try {
-      if (!phrase.trim()) return alert("Type a word");
-      setBusy("Creating 4s clip…");
-      await run("/api/quick4s", { phrase, aspect, quality, source, overlay, zoom, karaoke });
-    } catch (e) {
-      console.error(e);
-      setBusy("");
-      alert(e.message || "Quick 4s failed");
-    }
+    if (!phrase.trim()) return alert("Type a word");
+    await run("/api/quick4s", { phrase, aspect, quality, source, overlay, zoom, karaoke });
   };
 
   const montage4 = async () => {
-    try {
-      if (!phrase.trim()) return alert("Type a word");
-      setBusy("Creating 4x1s montage…");
-      await run("/api/montage", { phrase, aspect, quality, source, overlay, zoom, karaoke, count: 4 });
-    } catch (e) {
-      console.error(e);
-      setBusy("");
-      alert(e.message || "Montage failed");
-    }
+    if (!phrase.trim()) return alert("Type a word");
+    await run("/api/montage", { phrase, aspect, quality, source, overlay, zoom, karaoke, count: 4 });
+  };
+
+  const testShotstack = async () => {
+    await run("/api/smoke", { aspect, quality });
   };
 
   return (
@@ -124,28 +126,9 @@ export default function Home() {
           <div className="md:col-span-3">
             <div className="text-sm text-white/70 mb-1">Image source</div>
             <div className="flex gap-2">
-              <button
-                className={`btn ${source === "pexels" ? "btn-accent" : "btn-muted"}`}
-                onClick={() => setSource("pexels")}
-                disabled={!caps.pexels}
-                title={!caps.pexels ? "Add PEXELS_API_KEY to enable" : ""}
-              >
-                Pexels
-              </button>
-              <button
-                className={`btn ${source === "placeholder" ? "btn-accent" : "btn-muted"}`}
-                onClick={() => setSource("placeholder")}
-              >
-                Placeholder
-              </button>
-              <button
-                className={`btn ${source === "ai" ? "btn-accent" : "btn-muted"}`}
-                onClick={() => setSource("ai")}
-                disabled={!caps.ai_cf && !caps.ai_hf}
-                title={!caps.ai_cf && !caps.ai_hf ? "Add CF_* or HF_TOKEN to enable AI" : (caps.ai_cf ? "Cloudflare AI" : "Hugging Face AI")}
-              >
-                AI
-              </button>
+              <button className={`btn ${source === "pexels" ? "btn-accent" : "btn-muted"}`} onClick={() => setSource("pexels")} disabled={!caps.pexels} title={!caps.pexels ? "Add PEXELS_API_KEY to enable" : ""}>Pexels</button>
+              <button className={`btn ${source === "placeholder" ? "btn-accent" : "btn-muted"}`} onClick={() => setSource("placeholder")}>Placeholder</button>
+              <button className={`btn ${source === "ai" ? "btn-accent" : "btn-muted"}`} onClick={() => setSource("ai")} disabled={!caps.ai_cf && !caps.ai_hf} title={!caps.ai_cf && !caps.ai_hf ? "Add CF_* or HF_TOKEN to enable AI" : (caps.ai_cf ? "Cloudflare AI" : "Hugging Face AI")}>AI</button>
             </div>
           </div>
 
@@ -159,31 +142,33 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button className="btn btn-accent" onClick={quick4s}>Quick 4s</button>
           <button className="btn btn-primary" onClick={montage4}>Montage (4 × 1s)</button>
+          <button className="btn btn-muted" onClick={testShotstack} title="2s sanity check">Test Shotstack</button>
         </div>
 
         {busy && <div className="text-sm text-white/70">{busy}</div>}
+        {errMsg && <div className="text-sm text-red-300 break-words">Error: {errMsg}</div>}
       </section>
 
-      {job.id && (
-        <section className="glass p-4 md:p-6 shadow-soft space-y-3">
-          <div className="text-sm">Status: {job.status || "queued"}</div>
-          {job.url && (
-            <>
-              <video src={job.url} className="w-full rounded-lg border border-white/10" controls />
-              <div className="text-xs">
-                <a className="underline" href={job.url} target="_blank" rel="noreferrer">Open MP4</a>
-              </div>
-            </>
-          )}
-        </section>
-      )}
+      <section className="glass p-4 md:p-6 shadow-soft space-y-3">
+        <h2 className="text-lg font-semibold">Preview</h2>
+        {job.url ? (
+          <>
+            <video src={job.url} className="w-full rounded-lg border border-white/10" controls />
+            <div className="text-xs">
+              <a className="underline" href={job.url} target="_blank" rel="noreferrer">Open MP4</a>
+            </div>
+          </>
+        ) : job.id ? (
+          <div className="text-sm text-white/70">Status: {job.status || "queued"} — waiting for URL…</div>
+        ) : (
+          <div className="text-sm text-white/50">No render yet. Type a word and click Quick 4s or Montage.</div>
+        )}
+      </section>
 
-      <footer className="text-center text-white/50 text-xs pt-2">
-        Type a word → Quick 4s or Montage → Done
-      </footer>
+      <footer className="text-center text-white/50 text-xs pt-2">Type a word → Quick 4s or Montage → Done</footer>
     </main>
   );
 }
