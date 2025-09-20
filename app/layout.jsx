@@ -1,10 +1,5 @@
-export const metadata = {
-  title: "MatchCut",
-  description: "Text + Visual match-cut editor"
-};
-
+export const metadata = { title: "MatchCut", description: "Type a word → match cut" };
 import "./globals.css";
-
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
