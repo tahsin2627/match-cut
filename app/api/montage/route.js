@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Buffer } from "node:buffer";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -11,6 +12,7 @@ async function getImages({ phrase, aspect, count = 4, source = "pexels" }) {
   const urls = [];
   const dims = dimsFor(aspect, "1080p");
   const orientation = aspect === "9:16" ? "portrait" : "landscape";
+
   const usePexels = source === "pexels" && !!process.env.PEXELS_API_KEY;
   const useCF = source === "ai" && !!process.env.CF_ACCOUNT_ID && !!process.env.CF_API_TOKEN;
   const useHF = source === "ai" && !!process.env.HF_TOKEN;
