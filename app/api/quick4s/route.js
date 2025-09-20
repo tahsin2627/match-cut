@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Buffer } from "node:buffer";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,6 @@ function escapeHtml(str = "") {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 }
-
 function dimsFor(aspect, quality) {
   if (aspect === "9:16") return quality === "1080p" ? { w: 1080, h: 1920 } : { w: 720, h: 1280 };
   return quality === "1080p" ? { w: 1920, h: 1080 } : { w: 1280, h: 720 };
@@ -43,16 +43,14 @@ async function getImages({ phrase, aspect, count = 1, source = "pexels" }) {
     } catch (e) { console.warn("PEXELS fallback:", e?.message); }
   }
 
-  // Cloudflare Workers AI (free tier)
   if (useCF && urls.length < count) {
     try {
       const remain = count - urls.length;
-      const ai = await generateAIImagesCF({ prompt: phrase, n: remain /* aspect ignored by API, CSS will cover */ });
+      const ai = await generateAIImagesCF({ prompt: phrase, n: remain });
       urls.push(...ai);
     } catch (e) { console.warn("CF AI fallback:", e?.message); }
   }
 
-  // Hugging Face Inference API (free but rate-limited)
   if (!useCF && useHF && urls.length < count) {
     try {
       const remain = count - urls.length;
@@ -67,7 +65,6 @@ async function getImages({ phrase, aspect, count = 1, source = "pexels" }) {
   return urls.slice(0, count);
 }
 
-// Cloudflare Workers AI (Flux Schnell)
 async function generateAIImagesCF({ prompt, n = 1 }) {
   const account = process.env.CF_ACCOUNT_ID;
   const token = process.env.CF_API_TOKEN;
@@ -76,10 +73,7 @@ async function generateAIImagesCF({ prompt, n = 1 }) {
   for (let i = 0; i < n; i++) {
     const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/ai/run/${model}`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json"
-      },
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ prompt })
     });
     if (!res.ok) throw new Error(`CF AI error ${res.status}`);
@@ -90,19 +84,14 @@ async function generateAIImagesCF({ prompt, n = 1 }) {
   return out;
 }
 
-// Hugging Face Inference API (FLUX.1-schnell or similar)
 async function generateAIImagesHF({ prompt, n = 1 }) {
   const token = process.env.HF_TOKEN;
-  const model = "black-forest-labs/FLUX.1-schnell"; // can change to any supported image model
+  const model = "black-forest-labs/FLUX.1-schnell";
   const out = [];
   for (let i = 0; i < n; i++) {
     const res = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        Accept: "image/png"
-      },
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "image/png" },
       body: JSON.stringify({ inputs: prompt })
     });
     if (!res.ok) throw new Error(`HF error ${res.status}`);
