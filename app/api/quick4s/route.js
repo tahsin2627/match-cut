@@ -7,10 +7,49 @@ const SHOTSTACK = "https://api.shotstack.io/stage";
 
 function escapeHtml(s=""){return String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");}
 function dimsFor(aspect, quality){if(aspect==="9:16")return quality==="1080p"?{w:1080,h:1920}:{w:720,h:1280};return quality==="1080p"?{w:1920,h:1080}:{w:1280,h:720};}
+function mapResolution(q){return q==="1080p"?"1080":"hd";} // Shotstack expects "1080" or "hd" (720p)
 
+/* --- Cloudflare Images uploader (replaces Cloudinary) --- */
+async function uploadDataUrlToCFImages(dataUrl) {
+  const accountId = process.env.CF_IMAGES_ACCOUNT_ID;
+  const token = process.env.CF_IMAGES_API_TOKEN;
+  if (!accountId || !token) throw new Error("Missing CF_IMAGES_* env vars");
+
+  const m = dataUrl.match(/^data:(.+);base64,(.*)$/);
+  if (!m) throw new Error("Invalid data URL");
+  const mime = m[1];
+  const b64 = m[2];
+  const buffer = Buffer.from(b64, "base64");
+
+  const form = new FormData();
+  form.append("file", new Blob([buffer], { type: mime }), `gen-${Date.now()}.png`);
+
+  const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/images/v1`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form
+  });
+  const j = await r.json();
+  if (!r.ok || !j.success) throw new Error(j?.errors?.[0]?.message || "CF Images upload failed");
+  const url = j.result?.variants?.[0];
+  if (!url) throw new Error("CF Images variant URL missing");
+  return url; // CDN URL
+}
+
+async function ensureHosted(url, aspect, phrase){
+  if (url.startsWith("data:image")) {
+    try { return await uploadDataUrlToCFImages(url); }
+    catch {
+      const dims = dimsFor(aspect,"1080p");
+      return `https://picsum.photos/seed/${encodeURIComponent((phrase||"matchcut")+"-"+Math.random().toString(36).slice(2))}/${dims.w}/${dims.h}`;
+    }
+  }
+  return url;
+}
+
+/* --- Image sources (Pexels / AI via CF or HF / Placeholder) --- */
 async function getImages({ phrase, aspect, count = 1, source = "pexels" }) {
   const urls = [];
-  const dims = dimsFor(aspect, "1080p");
   const orientation = aspect === "9:16" ? "portrait" : "landscape";
   const usePexels = source === "pexels" && !!process.env.PEXELS_API_KEY;
   const useCF = source === "ai" && !!process.env.CF_ACCOUNT_ID && !!process.env.CF_API_TOKEN;
@@ -26,28 +65,30 @@ async function getImages({ phrase, aspect, count = 1, source = "pexels" }) {
         const src = pick?.src?.original || pick?.src?.large2x || pick?.src?.large;
         if (src) urls.push(src);
       }
-    } catch (e) { console.warn("PEXELS fallback:", e?.message); }
+    } catch {}
   }
   if (useCF && urls.length < count) {
-    try {
-      const remain = count - urls.length;
-      const ai = await generateAIImagesCF({ prompt: phrase, n: remain });
-      urls.push(...ai);
-    } catch (e) { console.warn("CF AI fallback:", e?.message); }
+    const remain = count - urls.length;
+    const ai = await generateAIImagesCF({ prompt: phrase, n: remain }).catch(() => []);
+    urls.push(...ai);
   }
   if (!useCF && useHF && urls.length < count) {
-    try {
-      const remain = count - urls.length;
-      const ai = await generateAIImagesHF({ prompt: phrase, n: remain });
-      urls.push(...ai);
-    } catch (e) { console.warn("HF AI fallback:", e?.message); }
+    const remain = count - urls.length;
+    const ai = await generateAIImagesHF({ prompt: phrase, n: remain }).catch(() => []);
+    urls.push(...ai);
   }
   while (urls.length < count) {
+    const dims = dimsFor(aspect,"1080p");
     urls.push(`https://picsum.photos/seed/${encodeURIComponent((phrase||"matchcut")+"-"+Math.random().toString(36).slice(2))}/${dims.w}/${dims.h}`);
   }
-  return urls.slice(0, count);
+  const hosted = [];
+  for (const u of urls.slice(0, count)) {
+    hosted.push(await ensureHosted(u, aspect, phrase));
+  }
+  return hosted;
 }
 
+// Cloudflare Workers AI (Flux Schnell)
 async function generateAIImagesCF({ prompt, n = 1 }) {
   const account = process.env.CF_ACCOUNT_ID;
   const token = process.env.CF_API_TOKEN;
@@ -55,18 +96,17 @@ async function generateAIImagesCF({ prompt, n = 1 }) {
   const out = [];
   for (let i=0;i<n;i++){
     const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/ai/run/${model}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt })
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ prompt })
     });
     if (!res.ok) throw new Error(`CF AI error ${res.status}`);
     const buf = await res.arrayBuffer();
     const b64 = Buffer.from(buf).toString("base64");
-    out.push(`data:image/png;base64,${b64}`);
+    out.push(`data:image/png;base64,${b64}`); // will be hosted by ensureHosted
   }
   return out;
 }
 
+// Hugging Face Inference API
 async function generateAIImagesHF({ prompt, n = 1 }) {
   const token = process.env.HF_TOKEN;
   const model = "black-forest-labs/FLUX.1-schnell";
@@ -80,7 +120,7 @@ async function generateAIImagesHF({ prompt, n = 1 }) {
     if (!res.ok) throw new Error(`HF error ${res.status}`);
     const buf = await res.arrayBuffer();
     const b64 = Buffer.from(buf).toString("base64");
-    out.push(`data:image/png;base64,${b64}`);
+    out.push(`data:image/png;base64,${b64}`); // will be hosted by ensureHosted
   }
   return out;
 }
@@ -94,8 +134,8 @@ export async function POST(req) {
     const [imageUrl] = await getImages({ phrase, aspect, count: 1, source });
     const safeWord = escapeHtml(phrase);
     const length = 4.0;
-    const resolution = quality === "1080p" ? "1080p" : "hd";
     const dims = dimsFor(aspect, "1080p");
+    const resolution = mapResolution(quality);
 
     const html = `
       <div class="wrap">
