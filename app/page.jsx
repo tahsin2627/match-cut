@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const DEFAULT_ASPECT = process.env.NEXT_PUBLIC_DEFAULT_ASPECT || "9:16";
 const DEFAULT_QUALITY = process.env.NEXT_PUBLIC_DEFAULT_QUALITY || "1080p";
@@ -13,12 +13,23 @@ export default function Home() {
   const [source, setSource] = useState("placeholder"); // auto-set after caps load
 
   const [overlay, setOverlay] = useState(true);
-  const [zoom, setZoom] = useState(true);
+  const [zoom, setZoom] = useState(true); // kept for compatibility (not used in latest server)
   const [karaoke, setKaraoke] = useState(true);
 
   const [busy, setBusy] = useState("");
   const [job, setJob] = useState({ id: "", status: "", url: "" });
   const [errMsg, setErrMsg] = useState("");
+
+  // Progress/ETA
+  const [progress, setProgress] = useState(0);
+  const [progressTarget, setProgressTarget] = useState(0);
+  const [etaLeftSec, setEtaLeftSec] = useState(0);
+  const [jobKind, setJobKind] = useState("quick"); // "quick" | "montage" | "smoke"
+
+  const startRef = useRef(0);
+  const lastStatusRef = useRef("");
+  const estTotalMsRef = useRef(25000);
+  const progressTimerRef = useRef(null);
 
   useEffect(() => {
     (async () => {
@@ -36,6 +47,28 @@ export default function Home() {
     })();
   }, []);
 
+  // Smoothly animate progress toward progressTarget
+  useEffect(() => {
+    if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+    progressTimerRef.current = setInterval(() => {
+      setProgress((prev) => {
+        if (prev >= progressTarget) return prev;
+        const step = prev < 50 ? 2 : 1; // speed up early, slow down later
+        return Math.min(progressTarget, prev + step);
+      });
+
+      // Update ETA based on elapsed vs estimate
+      if (startRef.current && estTotalMsRef.current > 0) {
+        const elapsedMs = Date.now() - startRef.current;
+        const left = Math.max(0, Math.ceil((estTotalMsRef.current - elapsedMs) / 1000));
+        setEtaLeftSec(left);
+      }
+    }, 180);
+
+    return () => clearInterval(progressTimerRef.current);
+  }, [progressTarget]);
+
+  // Poll Shotstack status
   async function poll(id) {
     const sr = await fetch(`/api/render/status?id=${id}`);
     const sj = await sr.json();
@@ -44,43 +77,92 @@ export default function Home() {
       setBusy("");
       return;
     }
+
     setJob((prev) => ({ ...prev, status: sj.status, url: sj.url || "" }));
-    if (sj.status === "done" || sj.status === "failed" || sj.status === "cancelled") {
+
+    // Map status to progress target
+    const status = String(sj.status || "").toLowerCase();
+    lastStatusRef.current = status;
+
+    // Stage-based floor targets
+    let target = progressTarget;
+    if (status.includes("queued")) target = Math.max(target, 10);
+    else if (status.includes("fetch")) target = Math.max(target, 20);
+    else if (status.includes("render")) {
+      // During rendering, drive target with time-based estimate
+      const elapsed = Date.now() - startRef.current;
+      const pctTime = Math.min(0.98, elapsed / estTotalMsRef.current); // cap at 98%
+      const dynamicTarget = 25 + Math.round(pctTime * 65); // 25% → 90%
+      target = Math.max(target, dynamicTarget);
+    } else if (status.includes("save")) target = Math.max(target, 95);
+    else if (status.includes("done")) target = 100;
+    setProgressTarget(target);
+
+    if (status === "done" || status === "failed" || status === "cancelled") {
       setBusy("");
-      if (sj.status !== "done") setErrMsg(`Render ${sj.status}`);
+      if (status !== "done") setErrMsg(`Render ${status}`);
+      setProgress(100);
+      setEtaLeftSec(0);
       return;
     }
+
+    // Keep polling
     setTimeout(() => poll(id), 2500);
   }
 
-  async function run(path, body) {
+  function estimateTotalMs(kind, src, qual) {
+    // Heuristic estimates so users see a realistic countdown
+    // Base times (in seconds)
+    let base = 18; // placeholder/pexels quick4s
+    if (src === "ai") base = 38;
+    if (kind === "montage") base += 6; // montage needs more time
+    if (qual === "1080p") base *= 1.2; // 1080 a bit slower
+    return Math.round(base * 1000);
+  }
+
+  async function run(path, body, kind) {
     setErrMsg("");
     setBusy("Creating render…");
     setJob({ id: "", status: "queued", url: "" });
-    const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+    // Init progress + ETA
+    setProgress(3);
+    setProgressTarget(8);
+    setJobKind(kind);
+    startRef.current = Date.now();
+    estTotalMsRef.current = estimateTotalMs(kind, source, quality);
+    setEtaLeftSec(Math.ceil(estTotalMsRef.current / 1000));
+
+    const r = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
     const j = await r.json();
     if (!r.ok) {
       setBusy("");
       setErrMsg(j?.detail ? JSON.stringify(j.detail) : (j?.error || "Render create failed"));
       return;
     }
+
     setJob({ id: j.id, status: "queued", url: "" });
     setBusy("Rendering…");
+    setProgressTarget(12);
     poll(j.id);
   }
 
   const quick4s = async () => {
     if (!phrase.trim()) return alert("Type a word");
-    await run("/api/quick4s", { phrase, aspect, quality, source, overlay, zoom, karaoke });
+    await run("/api/quick4s", { phrase, aspect, quality, source, overlay, karaoke }, "quick");
   };
 
   const montage4 = async () => {
     if (!phrase.trim()) return alert("Type a word");
-    await run("/api/montage", { phrase, aspect, quality, source, overlay, zoom, karaoke, count: 4 });
+    await run("/api/montage", { phrase, aspect, quality, source, overlay, karaoke, count: 4 }, "montage");
   };
 
   const testShotstack = async () => {
-    await run("/api/smoke", { aspect, quality });
+    await run("/api/smoke", { aspect, quality }, "smoke");
   };
 
   return (
@@ -136,7 +218,6 @@ export default function Home() {
             <div className="text-sm text-white/70 mb-1">Options</div>
             <div className="flex flex-wrap gap-2">
               <button className={`btn ${overlay ? "btn-accent" : "btn-muted"}`} onClick={() => setOverlay((v) => !v)}>Word overlay {overlay ? "On" : "Off"}</button>
-              <button className={`btn ${zoom ? "btn-accent" : "btn-muted"}`} onClick={() => setZoom((v) => !v)}>Zoom {zoom ? "On" : "Off"}</button>
               <button className={`btn ${karaoke ? "btn-accent" : "btn-muted"}`} onClick={() => setKaraoke((v) => !v)}>Highlight sweep {karaoke ? "On" : "Off"}</button>
             </div>
           </div>
@@ -154,6 +235,22 @@ export default function Home() {
 
       <section className="glass p-4 md:p-6 shadow-soft space-y-3">
         <h2 className="text-lg font-semibold">Preview</h2>
+
+        {/* Progress/ETA panel always visible when a job is active */}
+        {job.id && (
+          <div className="space-y-2">
+            <div className="w-full h-2 bg-white/10 rounded overflow-hidden">
+              <div
+                className="h-2 bg-gradient-to-r from-brand-purple to-brand-pink"
+                style={{ width: `${Math.max(0, Math.min(100, progress))}%`, transition: "width 0.18s ease" }}
+              />
+            </div>
+            <div className="text-sm text-white/70">
+              {job.status ? `Status: ${job.status}` : "Status: queued"} · {Math.round(progress)}% {etaLeftSec > 0 ? `· ~${etaLeftSec}s left` : ""}
+            </div>
+          </div>
+        )}
+
         {job.url ? (
           <>
             <video src={job.url} className="w-full rounded-lg border border-white/10" controls />
@@ -161,14 +258,14 @@ export default function Home() {
               <a className="underline" href={job.url} target="_blank" rel="noreferrer">Open MP4</a>
             </div>
           </>
-        ) : job.id ? (
-          <div className="text-sm text-white/70">Status: {job.status || "queued"} — waiting for URL…</div>
-        ) : (
+        ) : !job.id ? (
           <div className="text-sm text-white/50">No render yet. Type a word and click Quick 4s or Montage.</div>
-        )}
+        ) : null}
       </section>
 
-      <footer className="text-center text-white/50 text-xs pt-2">Type a word → Quick 4s or Montage → Done</footer>
+      <footer className="text-center text-white/50 text-xs pt-2">
+        Type a word → Quick 4s or Montage → Done
+      </footer>
     </main>
   );
 }
