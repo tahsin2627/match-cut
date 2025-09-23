@@ -1,0 +1,33 @@
+:root {
+  --bg: #0b0b0b;
+  --muted: #9ca3af;
+  --accent: #6b21a8;
+}
+
+html,body,#__next {
+  height:100%;
+  margin:0;
+  padding:0;
+  background: linear-gradient(180deg,#050506,#0b0b0b);
+  font-family: Inter, system-ui, -apple-system, Roboto, "Segoe UI", sans-serif;
+  color: #fff;
+}
+
+.container {
+  padding:18px;
+  max-width:900px;
+  margin: 12px auto;
+}
+
+.title {
+  font-size:20px;
+  margin:6px 0 0 0;
+  font-weight:800;
+}
+
+.subtitle {
+  color: var(--muted);
+  margin:6px 0 14px 0;
+}
+
+.footer { margin-top:18px; color:var(--muted); font-size:13px; }
