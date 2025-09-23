@@ -1,33 +1,29 @@
-:root {
-  --bg: #0b0b0b;
-  --muted: #9ca3af;
-  --accent: #6b21a8;
+:root{
+  --bg1: #040406;
+  --bg2: #0b0b0d;
+  --glass: rgba(255,255,255,0.06);
+  --muted: rgba(255,255,255,0.56);
+  --accent: #7c3aed;
 }
 
-html,body,#__next {
-  height:100%;
-  margin:0;
-  padding:0;
-  background: linear-gradient(180deg,#050506,#0b0b0b);
-  font-family: Inter, system-ui, -apple-system, Roboto, "Segoe UI", sans-serif;
-  color: #fff;
+html,body,#__next { height:100%; margin:0; padding:0; font-family: Inter, system-ui, -apple-system, Roboto, "Segoe UI", sans-serif; background: radial-gradient(1200px 800px at 10% 10%, rgba(124,58,237,0.06), transparent), linear-gradient(180deg,var(--bg1),var(--bg2)); color:#fff; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
+
+.topbar {
+  display:flex; align-items:center; justify-content:space-between; padding:14px 18px; gap:12px;
+  backdrop-filter: blur(8px) saturate(160%);
 }
 
-.container {
-  padding:18px;
-  max-width:900px;
-  margin: 12px auto;
-}
+.brand { display:flex; align-items:center; gap:12px; }
+.logo { width:46px; height:46px; border-radius:12px; display:flex; align-items:center; justify-content:center; font-weight:800; background: linear-gradient(135deg,#7c3aed,#5b21b6); box-shadow: 0 8px 24px rgba(124,58,237,0.14); color:white; }
+.brand-text { line-height:1; }
+.brand-text strong { font-size:15px; display:block; }
+.brand-text .sub { font-size:11px; color:var(--muted); display:block; margin-top:2px; }
 
-.title {
-  font-size:20px;
-  margin:6px 0 0 0;
-  font-weight:800;
-}
+.ghost { background:transparent; border:1px solid rgba(255,255,255,0.04); color:var(--muted); padding:8px 10px; border-radius:10px; }
 
-.subtitle {
-  color: var(--muted);
-  margin:6px 0 14px 0;
-}
+.main { max-width:1100px; margin:20px auto; padding:18px; display:grid; grid-template-columns: 1fr 420px; gap:26px; }
+.left { padding-right:8px; }
+.headline { font-size:26px; margin:4px 0 8px 0; line-height:1.05; }
+.lead { color:var(--muted); margin:0 0 14px 0; }
 
-.footer { margin-top:18px; color:var(--muted); font-size:13px; }
+.glass { background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); border-radius:14px; padding:12px; border:1px solid rgba(255,255,255,0.05); backdrop-filter: blur(10px) saturate(145%); box-shadow: 0 12px 40px rgba(8,8,12,0.
