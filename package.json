@@ -1,15 +1,23 @@
 {
-  "name": "match-cut-generator",
+  "name": "match-cut",
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3000",
+    "dev": "next dev",
     "build": "next build",
-    "start": "next start -p 3000"
+    "start": "next start"
   },
   "dependencies": {
-    "next": "14.1.0",
-    "react": "18.2.0",
-    "react-dom": "18.2.0"
+    "next": "14.2.3",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "gsap": "3.12.5",
+    "@ffmpeg/ffmpeg": "0.12.6"
+  },
+  "devDependencies": {
+    "tailwindcss": "3.4.4",
+    "autoprefixer": "10.4.19",
+    "postcss": "8.4.39",
+    "typescript": "5.4.5"
   }
 }
